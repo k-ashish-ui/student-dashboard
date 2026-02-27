@@ -154,25 +154,70 @@ class ChoiceFillingAssistant:
         try:
             self.df = pd.read_csv(csv_path)
             st.success(f"✓ Loaded {len(self.df)} records from JoSAA data")
+            
+            # Show column names for debugging
+            st.info(f"📋 Data columns: {', '.join(self.df.columns.tolist())}")
+            
+            # Show sample institute names (IMPORTANT for debugging)
+            if 'Institute' in self.df.columns:
+                unique_institutes = self.df['Institute'].unique()[:10]
+                st.write("📍 Sample Institute Names (first 10):")
+                for inst in unique_institutes:
+                    st.write(f"  • {inst}")
+            
+            # Show a sample row
+            if len(self.df) > 0:
+                with st.expander("Show sample data (first row)"):
+                    st.write(self.df.head(1))
+                
         except Exception as e:
             st.error(f"Error loading data: {e}")
             self.df = None
     
     def normalize_institute_name(self, name):
+        """Normalize institute names - DO NOT convert, keep as is"""
         if not isinstance(name, str):
             return name
-        name = name.replace("IIT", "Indian Institute of Technology")
-        name = name.replace("NIT", "National Institute of Technology")
+        # Just return the name as-is, don't convert
         return name.strip()
     
     def get_nirf_rank(self, institute_name):
-        normalized = self.normalize_institute_name(institute_name)
-        if normalized in NIRF_RANKINGS:
-            return NIRF_RANKINGS[normalized]
+        """Get NIRF ranking for an institute - handles both full names and abbreviations"""
+        if not isinstance(institute_name, str):
+            return 999
+        
+        institute_lower = institute_name.lower().strip()
+        
+        # First try exact match
         for nirf_name, rank in NIRF_RANKINGS.items():
-            if nirf_name.lower() in normalized.lower() or normalized.lower() in nirf_name.lower():
+            if nirf_name.lower() == institute_lower:
                 return rank
-        return 999
+        
+        # Try partial match (contains)
+        for nirf_name, rank in NIRF_RANKINGS.items():
+            if nirf_name.lower() in institute_lower or institute_lower in nirf_name.lower():
+                return rank
+        
+        # Try matching with common abbreviations
+        # e.g., "IIT Madras" should match "Indian Institute of Technology Madras"
+        if 'iit' in institute_lower:
+            # Extract location (e.g., "madras", "delhi", "bombay")
+            for nirf_name, rank in NIRF_RANKINGS.items():
+                if 'indian institute of technology' in nirf_name.lower():
+                    # Get the location part from NIRF name (last word usually)
+                    nirf_location = nirf_name.lower().split()[-1]
+                    if nirf_location in institute_lower:
+                        return rank
+        
+        if 'nit' in institute_lower:
+            # Extract location for NITs
+            for nirf_name, rank in NIRF_RANKINGS.items():
+                if 'national institute of technology' in nirf_name.lower():
+                    nirf_location = nirf_name.lower().split()[-1]
+                    if nirf_location in institute_lower:
+                        return rank
+        
+        return 999  # Not found in NIRF top 30
     
     def get_branch_score(self, branch_name):
         if not isinstance(branch_name, str):
@@ -219,37 +264,73 @@ class ChoiceFillingAssistant:
             return default_response
         
         try:
+            st.write(f"🔍 Debug: Starting with {len(self.df)} records")
+            
             filtered_df = self.df.copy()
             user_rank = user_prefs.get('rank', 0)
             exam_type = user_prefs.get('exam_type', 'advanced')
             
+            st.write(f"🔍 Debug: User rank = {user_rank}, Exam type = {exam_type}")
+            
             # Filter by exam type
+            # Check for both full name and abbreviation
             if exam_type == 'advanced':
-                filtered_df = filtered_df[
-                    filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False)
-                ]
+                # JEE Advanced - Show only IITs
+                # Try to match: "Indian Institute of Technology" OR "IIT"
+                mask = (
+                    filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False) |
+                    filtered_df['Institute'].str.contains(r'\bIIT\b', case=False, na=False, regex=True)
+                )
+                filtered_df = filtered_df[mask]
+                st.write(f"🔍 Debug: After IIT filter = {len(filtered_df)} records")
             else:
-                filtered_df = filtered_df[
-                    ~filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False)
-                ]
+                # JEE Main - Show NITs, IIITs, GFTIs (exclude IITs)
+                # Exclude: "Indian Institute of Technology" OR "IIT" (but keep IIIT)
+                mask = (
+                    ~filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False) &
+                    ~filtered_df['Institute'].str.contains(r'\bIIT\b', case=False, na=False, regex=True)
+                )
+                filtered_df = filtered_df[mask]
+                st.write(f"🔍 Debug: After NIT/IIIT filter = {len(filtered_df)} records")
+            
+            if len(filtered_df) == 0:
+                default_response['error'] = f'No colleges found for {exam_type} exam type. Check your data has the right institute names.'
+                return default_response
             
             if 'Closing Rank' in filtered_df.columns:
                 filtered_df['Closing Rank'] = pd.to_numeric(filtered_df['Closing Rank'], errors='coerce')
+                before_rank_filter = len(filtered_df)
                 filtered_df = filtered_df[filtered_df['Closing Rank'] >= user_rank * 0.8]
+                st.write(f"🔍 Debug: After rank filter ({user_rank * 0.8}) = {len(filtered_df)} records (removed {before_rank_filter - len(filtered_df)})")
+            
+            if len(filtered_df) == 0:
+                default_response['error'] = f'No colleges found within your rank range. Your rank {user_rank} is too high for available options.'
+                return default_response
             
             category = user_prefs.get('category')
             if category and 'Seat Type' in filtered_df.columns:
+                before_cat = len(filtered_df)
                 filtered_df = filtered_df[filtered_df['Seat Type'].str.contains(category, case=False, na=False)]
+                st.write(f"🔍 Debug: After category filter ({category}) = {len(filtered_df)} records (removed {before_cat - len(filtered_df)})")
+            
+            if len(filtered_df) == 0:
+                default_response['error'] = f'No seats found for {category} category. Try a different category or increase rank range.'
+                return default_response
             
             gender = user_prefs.get('gender')
             if gender and 'Gender' in filtered_df.columns:
+                before_gender = len(filtered_df)
                 filtered_df = filtered_df[
                     (filtered_df['Gender'].str.contains(gender, case=False, na=False)) |
                     (filtered_df['Gender'].str.contains('Neutral', case=False, na=False))
                 ]
+                st.write(f"🔍 Debug: After gender filter ({gender}) = {len(filtered_df)} records (removed {before_gender - len(filtered_df)})")
             
             if len(filtered_df) == 0:
+                default_response['error'] = f'No seats found for {gender}. All filtered out.'
                 return default_response
+            
+            st.write(f"✅ Debug: Final filtered count = {len(filtered_df)} records")
             
             filtered_df['NIRF_Rank'] = filtered_df['Institute'].apply(self.get_nirf_rank)
             filtered_df['Branch_Score'] = filtered_df['Academic Program Name'].apply(self.get_branch_score)
@@ -264,6 +345,8 @@ class ChoiceFillingAssistant:
             
             max_choices = user_prefs.get('max_choices', 100)
             top_choices = filtered_df.head(max_choices)
+            
+            st.write(f"✅ Debug: Returning top {len(top_choices)} recommendations")
             
             recommendations = []
             for idx, row in top_choices.iterrows():
@@ -288,6 +371,9 @@ class ChoiceFillingAssistant:
             }
             
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            st.error(f"Detailed error: {error_details}")
             default_response['error'] = f'Error processing recommendations: {str(e)}'
             return default_response
     
