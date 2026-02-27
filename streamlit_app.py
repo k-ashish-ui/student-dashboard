@@ -206,75 +206,90 @@ class ChoiceFillingAssistant:
         return score
     
     def get_recommendations(self, user_prefs):
-        if self.df is None:
-            return {'error': 'No data loaded', 'recommendations': []}
-        
-        filtered_df = self.df.copy()
-        user_rank = user_prefs.get('rank', 0)
-        exam_type = user_prefs.get('exam_type', 'advanced')
-        
-        # Filter by exam type
-        if exam_type == 'advanced':
-            filtered_df = filtered_df[
-                filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False)
-            ]
-        else:
-            filtered_df = filtered_df[
-                ~filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False)
-            ]
-        
-        if 'Closing Rank' in filtered_df.columns:
-            filtered_df['Closing Rank'] = pd.to_numeric(filtered_df['Closing Rank'], errors='coerce')
-            filtered_df = filtered_df[filtered_df['Closing Rank'] >= user_rank * 0.8]
-        
-        category = user_prefs.get('category')
-        if category and 'Seat Type' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['Seat Type'].str.contains(category, case=False, na=False)]
-        
-        gender = user_prefs.get('gender')
-        if gender and 'Gender' in filtered_df.columns:
-            filtered_df = filtered_df[
-                (filtered_df['Gender'].str.contains(gender, case=False, na=False)) |
-                (filtered_df['Gender'].str.contains('Neutral', case=False, na=False))
-            ]
-        
-        if len(filtered_df) == 0:
-            return {'total_options': 0, 'showing': 0, 'recommendations': []}
-        
-        filtered_df['NIRF_Rank'] = filtered_df['Institute'].apply(self.get_nirf_rank)
-        filtered_df['Branch_Score'] = filtered_df['Academic Program Name'].apply(self.get_branch_score)
-        
-        choice_scores = []
-        for idx, row in filtered_df.iterrows():
-            score = self.calculate_choice_score(dict(row), user_prefs)
-            choice_scores.append(score)
-        
-        filtered_df['Choice_Score'] = choice_scores
-        filtered_df = filtered_df.sort_values('Choice_Score', ascending=False)
-        
-        max_choices = user_prefs.get('max_choices', 100)
-        top_choices = filtered_df.head(max_choices)
-        
-        recommendations = []
-        for idx, row in top_choices.iterrows():
-            recommendations.append({
-                'rank': len(recommendations) + 1,
-                'institute': row.get('Institute', 'N/A'),
-                'program': row.get('Academic Program Name', 'N/A'),
-                'quota': row.get('Quota', 'N/A'),
-                'seat_type': row.get('Seat Type', 'N/A'),
-                'opening_rank': row.get('Opening Rank', 'N/A'),
-                'closing_rank': row.get('Closing Rank', 'N/A'),
-                'nirf_rank': int(row.get('NIRF_Rank', 999)),
-                'choice_score': round(row.get('Choice_Score', 0), 2),
-                'probability': self.get_probability(user_rank, row.get('Closing Rank', 999999))
-            })
-        
-        return {
-            'total_options': len(filtered_df),
-            'showing': len(recommendations),
-            'recommendations': recommendations
+        # Always return a dict with expected keys
+        default_response = {
+            'total_options': 0,
+            'showing': 0,
+            'recommendations': [],
+            'error': None
         }
+        
+        if self.df is None:
+            default_response['error'] = 'No data loaded. Please upload josaa_data_2024_round5.csv to your repository.'
+            return default_response
+        
+        try:
+            filtered_df = self.df.copy()
+            user_rank = user_prefs.get('rank', 0)
+            exam_type = user_prefs.get('exam_type', 'advanced')
+            
+            # Filter by exam type
+            if exam_type == 'advanced':
+                filtered_df = filtered_df[
+                    filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False)
+                ]
+            else:
+                filtered_df = filtered_df[
+                    ~filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False)
+                ]
+            
+            if 'Closing Rank' in filtered_df.columns:
+                filtered_df['Closing Rank'] = pd.to_numeric(filtered_df['Closing Rank'], errors='coerce')
+                filtered_df = filtered_df[filtered_df['Closing Rank'] >= user_rank * 0.8]
+            
+            category = user_prefs.get('category')
+            if category and 'Seat Type' in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df['Seat Type'].str.contains(category, case=False, na=False)]
+            
+            gender = user_prefs.get('gender')
+            if gender and 'Gender' in filtered_df.columns:
+                filtered_df = filtered_df[
+                    (filtered_df['Gender'].str.contains(gender, case=False, na=False)) |
+                    (filtered_df['Gender'].str.contains('Neutral', case=False, na=False))
+                ]
+            
+            if len(filtered_df) == 0:
+                return default_response
+            
+            filtered_df['NIRF_Rank'] = filtered_df['Institute'].apply(self.get_nirf_rank)
+            filtered_df['Branch_Score'] = filtered_df['Academic Program Name'].apply(self.get_branch_score)
+            
+            choice_scores = []
+            for idx, row in filtered_df.iterrows():
+                score = self.calculate_choice_score(dict(row), user_prefs)
+                choice_scores.append(score)
+            
+            filtered_df['Choice_Score'] = choice_scores
+            filtered_df = filtered_df.sort_values('Choice_Score', ascending=False)
+            
+            max_choices = user_prefs.get('max_choices', 100)
+            top_choices = filtered_df.head(max_choices)
+            
+            recommendations = []
+            for idx, row in top_choices.iterrows():
+                recommendations.append({
+                    'rank': len(recommendations) + 1,
+                    'institute': row.get('Institute', 'N/A'),
+                    'program': row.get('Academic Program Name', 'N/A'),
+                    'quota': row.get('Quota', 'N/A'),
+                    'seat_type': row.get('Seat Type', 'N/A'),
+                    'opening_rank': row.get('Opening Rank', 'N/A'),
+                    'closing_rank': row.get('Closing Rank', 'N/A'),
+                    'nirf_rank': int(row.get('NIRF_Rank', 999)),
+                    'choice_score': round(row.get('Choice_Score', 0), 2),
+                    'probability': self.get_probability(user_rank, row.get('Closing Rank', 999999))
+                })
+            
+            return {
+                'total_options': len(filtered_df),
+                'showing': len(recommendations),
+                'recommendations': recommendations,
+                'error': None
+            }
+            
+        except Exception as e:
+            default_response['error'] = f'Error processing recommendations: {str(e)}'
+            return default_response
     
     def get_probability(self, user_rank, closing_rank):
         try:
@@ -290,7 +305,24 @@ class ChoiceFillingAssistant:
 
 # Initialize session state
 if 'assistant' not in st.session_state:
-    st.session_state.assistant = ChoiceFillingAssistant('josaa_data_2024_round5.csv')
+    # Check if data file exists
+    data_file = 'josaa_data_2024_round5.csv'
+    
+    if Path(data_file).exists():
+        try:
+            st.session_state.assistant = ChoiceFillingAssistant(data_file)
+        except Exception as e:
+            st.error(f"Error loading data: {e}")
+            st.session_state.assistant = ChoiceFillingAssistant()
+    else:
+        st.warning(f"""
+        ⚠️ **Data file not found: {data_file}**
+        
+        Please upload `josaa_data_2024_round5.csv` to your repository.
+        
+        The app will work but recommendations won't be available.
+        """)
+        st.session_state.assistant = ChoiceFillingAssistant()
 
 # Header
 st.title("🎓 JoSAA Choice Filling Assistant")
@@ -368,14 +400,25 @@ if submit_button:
         with st.spinner('🔄 Analyzing thousands of options...'):
             results = st.session_state.assistant.get_recommendations(user_prefs)
         
-        if results['total_options'] == 0:
+        # Check if there's an error
+        if 'error' in results:
+            st.error(f"""
+            ⚠️ **Error:** {results['error']}
+            
+            Please check:
+            1. Data file is loaded correctly
+            2. All fields are filled properly
+            3. Try different search criteria
+            """)
+        elif results.get('total_options', 0) == 0:
             st.warning("""
             ⚠️ **No colleges found!**
             
             Try:
             1. Different category
-            2. Higher max choices
+            2. Higher max choices  
             3. Check exam type (JEE Advanced vs Main)
+            4. Increase your rank range
             """)
         else:
             # Results header
