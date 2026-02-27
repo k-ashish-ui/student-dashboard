@@ -264,34 +264,26 @@ class ChoiceFillingAssistant:
             return default_response
         
         try:
-            st.write(f"🔍 Debug: Starting with {len(self.df)} records")
-            
             filtered_df = self.df.copy()
             user_rank = user_prefs.get('rank', 0)
             exam_type = user_prefs.get('exam_type', 'advanced')
-            
-            st.write(f"🔍 Debug: User rank = {user_rank}, Exam type = {exam_type}")
             
             # Filter by exam type
             # Check for both full name and abbreviation
             if exam_type == 'advanced':
                 # JEE Advanced - Show only IITs
-                # Try to match: "Indian Institute of Technology" OR "IIT"
                 mask = (
                     filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False) |
                     filtered_df['Institute'].str.contains(r'\bIIT\b', case=False, na=False, regex=True)
                 )
                 filtered_df = filtered_df[mask]
-                st.write(f"🔍 Debug: After IIT filter = {len(filtered_df)} records")
             else:
                 # JEE Main - Show NITs, IIITs, GFTIs (exclude IITs)
-                # Exclude: "Indian Institute of Technology" OR "IIT" (but keep IIIT)
                 mask = (
                     ~filtered_df['Institute'].str.contains('Indian Institute of Technology', case=False, na=False) &
                     ~filtered_df['Institute'].str.contains(r'\bIIT\b', case=False, na=False, regex=True)
                 )
                 filtered_df = filtered_df[mask]
-                st.write(f"🔍 Debug: After NIT/IIIT filter = {len(filtered_df)} records")
             
             if len(filtered_df) == 0:
                 default_response['error'] = f'No colleges found for {exam_type} exam type. Check your data has the right institute names.'
@@ -299,9 +291,7 @@ class ChoiceFillingAssistant:
             
             if 'Closing Rank' in filtered_df.columns:
                 filtered_df['Closing Rank'] = pd.to_numeric(filtered_df['Closing Rank'], errors='coerce')
-                before_rank_filter = len(filtered_df)
                 filtered_df = filtered_df[filtered_df['Closing Rank'] >= user_rank * 0.8]
-                st.write(f"🔍 Debug: After rank filter ({user_rank * 0.8}) = {len(filtered_df)} records (removed {before_rank_filter - len(filtered_df)})")
             
             if len(filtered_df) == 0:
                 default_response['error'] = f'No colleges found within your rank range. Your rank {user_rank} is too high for available options.'
@@ -309,9 +299,7 @@ class ChoiceFillingAssistant:
             
             category = user_prefs.get('category')
             if category and 'Seat Type' in filtered_df.columns:
-                before_cat = len(filtered_df)
                 filtered_df = filtered_df[filtered_df['Seat Type'].str.contains(category, case=False, na=False)]
-                st.write(f"🔍 Debug: After category filter ({category}) = {len(filtered_df)} records (removed {before_cat - len(filtered_df)})")
             
             if len(filtered_df) == 0:
                 default_response['error'] = f'No seats found for {category} category. Try a different category or increase rank range.'
@@ -319,18 +307,14 @@ class ChoiceFillingAssistant:
             
             gender = user_prefs.get('gender')
             if gender and 'Gender' in filtered_df.columns:
-                before_gender = len(filtered_df)
                 filtered_df = filtered_df[
                     (filtered_df['Gender'].str.contains(gender, case=False, na=False)) |
                     (filtered_df['Gender'].str.contains('Neutral', case=False, na=False))
                 ]
-                st.write(f"🔍 Debug: After gender filter ({gender}) = {len(filtered_df)} records (removed {before_gender - len(filtered_df)})")
             
             if len(filtered_df) == 0:
                 default_response['error'] = f'No seats found for {gender}. All filtered out.'
                 return default_response
-            
-            st.write(f"✅ Debug: Final filtered count = {len(filtered_df)} records")
             
             filtered_df['NIRF_Rank'] = filtered_df['Institute'].apply(self.get_nirf_rank)
             filtered_df['Branch_Score'] = filtered_df['Academic Program Name'].apply(self.get_branch_score)
@@ -345,8 +329,6 @@ class ChoiceFillingAssistant:
             
             max_choices = user_prefs.get('max_choices', 100)
             top_choices = filtered_df.head(max_choices)
-            
-            st.write(f"✅ Debug: Returning top {len(top_choices)} recommendations")
             
             recommendations = []
             for idx, row in top_choices.iterrows():
@@ -487,7 +469,7 @@ if submit_button:
             results = st.session_state.assistant.get_recommendations(user_prefs)
         
         # Check if there's an error
-        if 'error' in results:
+        if results.get('error') is not None and results.get('error') != 'None':
             st.error(f"""
             ⚠️ **Error:** {results['error']}
             
@@ -496,7 +478,7 @@ if submit_button:
             2. All fields are filled properly
             3. Try different search criteria
             """)
-        elif results.get('total_options', 0) == 0:
+        elif results.get('total_options', 0) == 0 or len(results.get('recommendations', [])) == 0:
             st.warning("""
             ⚠️ **No colleges found!**
             
